@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Generate answers for a JSON dataset with vLLM."""
-
 from __future__ import annotations
 
 import argparse
@@ -14,71 +11,71 @@ import os
 import time
 import threading
 
-# 禁用 HuggingFace Hub 的在线验证和连接
-# 这必须在导入 transformers 之前设置
-os.environ["HF_HUB_OFFLINE"] = "1"  # 强制离线模式
-os.environ["TRANSFORMERS_OFFLINE"] = "1"  # transformers 离线模式
-os.environ["HF_DATASETS_OFFLINE"] = "1"  # datasets 离线模式
 
-# 设置 Triton 编译环境变量（在容器中使用时很重要）
-# 必须在导入 vLLM/Triton 之前设置
+
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+
+
+
 if "APPTAINER_NAME" in os.environ or "SINGULARITY_NAME" in os.environ:
-    # 在 Apptainer/Singularity 容器中运行
-    # 强制使用容器内的编译器
+
+
     os.environ["CC"] = "/usr/bin/gcc"
     os.environ["CXX"] = "/usr/bin/g++"
     os.environ["CUDA_HOME"] = "/usr/local/cuda"
-    # 使用用户专属的缓存目录，避免多进程/多用户权限冲突
-    # 添加进程 ID 确保每个进程使用独立缓存
+
+
     triton_cache_dir = f"/tmp/triton_cache_{os.getenv('USER', 'default')}_{os.getpid()}"
     os.environ.setdefault("TRITON_CACHE_DIR", triton_cache_dir)
-    
-    # 清理 PATH，移除宿主机的 GCC 路径
+
+
     if "PATH" in os.environ:
         path_parts = os.environ["PATH"].split(":")
-        clean_paths = [p for p in path_parts if "/mnt/petrelfs/share/gcc" not in p]
-        # 确保容器的 bin 目录在最前面
+        clean_paths = [p for p in path_parts if "/path/to/models" not in p]
+
         clean_paths = ["/opt/py312/bin", "/usr/local/cuda/bin", "/usr/bin", "/bin"] + clean_paths
-        os.environ["PATH"] = ":".join(dict.fromkeys(clean_paths))  # 去重
-    
-    # 清理 LD_LIBRARY_PATH，移除宿主机特定路径
+        os.environ["PATH"] = ":".join(dict.fromkeys(clean_paths))
+
+
     if "LD_LIBRARY_PATH" in os.environ:
         ld_paths = os.environ["LD_LIBRARY_PATH"].split(":")
-        clean_paths = [p for p in ld_paths if not p.startswith("/mnt/petrelfs/share/")]
+        clean_paths = [p for p in ld_paths if not p.startswith("/path/to/models")]
         os.environ["LD_LIBRARY_PATH"] = ":".join(clean_paths)
-    
-    # 添加必要的 CUDA 库路径
+
+
     ld_path_prefix = "/usr/local/cuda/lib64:/.singularity.d/libs"
     if "LD_LIBRARY_PATH" in os.environ:
         os.environ["LD_LIBRARY_PATH"] = f"{ld_path_prefix}:{os.environ['LD_LIBRARY_PATH']}"
     else:
         os.environ["LD_LIBRARY_PATH"] = ld_path_prefix
 
-# 添加项目根目录到 Python 路径
+
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# 导入 qwen_vl_utils
+
 try:
     from adaptive_training.processors.qwen_vl_utils import process_vision_info
 except ImportError:
-    # 如果还是失败，尝试从当前目录导入
+
     try:
         from .qwen_vl_utils import process_vision_info
     except ImportError:
         from qwen_vl_utils import process_vision_info
 
-from vllm import LLM, SamplingParams  # type: ignore[import-not-found]
+from vllm import LLM, SamplingParams
 
 try:
-    from tqdm import tqdm  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - fallback when tqdm is unavailable
-    tqdm = lambda x, **_: x  # type: ignore
+    from tqdm import tqdm
+except ImportError:
+    tqdm = lambda x, **_: x
 
 try:
-    from transformers import AutoProcessor  # type: ignore[import-not-found]
-except ImportError as exc:  # pragma: no cover - provide helpful error later
-    AutoProcessor = None  # type: ignore[assignment]
+    from transformers import AutoProcessor
+except ImportError as exc:
+    AutoProcessor = None
     _AUTO_PROCESSOR_IMPORT_ERROR = exc
 else:
     _AUTO_PROCESSOR_IMPORT_ERROR = None
@@ -88,7 +85,6 @@ else:
 
 PROMPT_TEMPLATE = """
 {query}
-"""
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -107,7 +103,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model-path",
-        default="/mnt/dhwfile/raise/user/zhuyun/Qwen3-VL-30B-A3B-Thinking", 
+        default="/path/to/user/Qwen3-VL-30B-A3B-Thinking",
         help="Path or name of the vLLM-compatible model to load.",
     )
     parser.add_argument(
@@ -333,7 +329,7 @@ def prepare_messages(prompt: str, image_paths: Sequence[Path], is_error_analysis
         # """
         # system_content = """
         #     You are a helpful assistant.
-        # """   
+        # """
     messages: List[Dict[str, Any]] = [
         {
             "role": "system",
@@ -366,7 +362,6 @@ def prepare_request(
     is_error_analysis: bool = False,
     is_correction: bool = False,
 ) -> Dict[str, Any]:
-    """Build a vLLM request dictionary containing the prompt and optional multi-modal data."""
 
     messages = prepare_messages(prompt, image_paths, is_error_analysis=is_error_analysis, is_correction=is_correction)
 
@@ -536,15 +531,15 @@ def prepare_llm(args: argparse.Namespace) -> LLM:
     if args.dtype != "auto":
         llm_kwargs["dtype"] = args.dtype
     logging.info("Initialising LLM from %s", args.model_path)
-    llm_kwargs['max_model_len'] = args.max_model_len if args.max_model_len else 32768  
+    llm_kwargs['max_model_len'] = args.max_model_len if args.max_model_len else 32768
     llm_kwargs['gpu_memory_utilization'] = args.gpu_memory_utilization if args.gpu_memory_utilization is not None else 0.7
     logging.info("Using max_model_len=%d, gpu_memory_utilization=%.2f", llm_kwargs['max_model_len'], llm_kwargs['gpu_memory_utilization'])
-    
+
     llm_kwargs['enforce_eager'] = False  # 启用 CUDA Graph
-    llm_kwargs['enable_prefix_caching'] = True  
+    llm_kwargs['enable_prefix_caching'] = True
     llm_kwargs['enable_chunked_prefill'] = True
 
-    
+
     return LLM(**llm_kwargs)
 
 
@@ -658,24 +653,24 @@ def run() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
     logging.info("Starting generation for %s requests...", len(requests))
-    logging.info("Sampling params: max_tokens=%d, temperature=%.2f, top_p=%.2f", 
+    logging.info("Sampling params: max_tokens=%d, temperature=%.2f, top_p=%.2f",
                  sampling_params.max_tokens, sampling_params.temperature, sampling_params.top_p)
-    
+
     # 计算预估超时时间：每个请求最多 max_tokens，加上缓冲时间
     # 对于大模型（235B），每个token生成可能需要较长时间
     estimated_time_per_token = 0.1  # 秒（保守估计，实际可能更快或更慢）
     estimated_total_time = len(requests) * sampling_params.max_tokens * estimated_time_per_token
     # 设置超时时间为预估时间的2倍，但最少1小时，最多24小时（适应大规模数据集）
     timeout_seconds = max(3600, min(86400, int(estimated_total_time * 2)))
-    logging.info("⏱️  Estimated generation time: %.1f minutes (timeout set to %.1f minutes)", 
+    logging.info("⏱️  Estimated generation time: %.1f minutes (timeout set to %.1f minutes)",
                  estimated_total_time / 60, timeout_seconds / 60)
     sys.stdout.flush()
-    
+
     # 使用线程和超时机制来防止卡死
     outputs = None
     generation_error = None
     generation_completed = threading.Event()
-    
+
     def run_generation():
         nonlocal outputs, generation_error
         try:
@@ -688,34 +683,34 @@ def run() -> None:
         except Exception as e:
             generation_error = e
             generation_completed.set()
-    
+
     generation_thread = threading.Thread(target=run_generation, daemon=True)
     generation_thread.start()
-    
+
     # 定期输出进度信息（每5分钟）并检查超时
     progress_interval = 300  # 5分钟
     start_time = time.time()
-    
+
     while not generation_completed.is_set():
         elapsed = time.time() - start_time
         remaining_timeout = timeout_seconds - elapsed
-        
+
         if remaining_timeout <= 0:
             # 超时了
             break
-        
+
         # 等待进度间隔或剩余超时时间（取较小值）
         wait_time = min(progress_interval, remaining_timeout)
         if generation_completed.wait(timeout=wait_time):
             # 生成完成
             break
-        
+
         # 输出进度信息
         elapsed = time.time() - start_time
         logging.info(f"⏳ Generation still in progress... (elapsed: {elapsed/60:.1f} minutes)")
         logging.info(f"   Remaining timeout: {(timeout_seconds - elapsed)/60:.1f} minutes")
         sys.stdout.flush()
-    
+
     # 检查是否超时
     elapsed = time.time() - start_time
     if not generation_completed.is_set():
@@ -729,13 +724,13 @@ def run() -> None:
         sys.stdout.flush()
         sys.stderr.flush()
         raise RuntimeError(f"Generation timeout after {elapsed:.1f} seconds")
-    
+
     if generation_error:
         raise generation_error
-    
+
     if outputs is None:
         raise RuntimeError("Generation completed but outputs is None")
-    
+
     sys.stdout.flush()
     sys.stderr.flush()
     logging.info("Generation completed, processing outputs...")

@@ -1,6 +1,4 @@
-"""
 Adaptive Training Processors
-"""
 
 from .dpo_data_builder import DPODataBuilder
 

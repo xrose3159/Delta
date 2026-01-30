@@ -1,6 +1,4 @@
-#!/usr/bin/env bash
-# Color definitions
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m' # No Color
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
 trap 'printf "${YELLOW}\nDownload interrupted. You can resume by re-running the command.\n${NC}"; exit 1' INT
 
@@ -46,7 +44,6 @@ EOF
 REPO_ID=$1
 shift
 
-# Default values
 TOOL="aria2c"
 THREADS=4
 CONCURRENT=5
@@ -59,11 +56,10 @@ validate_number() {
     [[ "$2" =~ ^[1-9][0-9]*$ && "$2" -le "$3" ]] || { printf "${RED}[Error] $1 must be 1-$3${NC}\n"; exit 1; }
 }
 
-# Argument parsing
-while [[ $# -gt 0 ]]; do
+while [[ $
     case $1 in
-        --include) shift; while [[ $# -gt 0 && ! ($1 =~ ^--) && ! ($1 =~ ^-[^-]) ]]; do INCLUDE_PATTERNS+=("$1"); shift; done ;;
-        --exclude) shift; while [[ $# -gt 0 && ! ($1 =~ ^--) && ! ($1 =~ ^-[^-]) ]]; do EXCLUDE_PATTERNS+=("$1"); shift; done ;;
+        --include) shift; while [[ $
+        --exclude) shift; while [[ $
         --hf_username) HF_USERNAME="$2"; shift 2 ;;
         --hf_token) HF_TOKEN="$2"; shift 2 ;;
         --tool)
@@ -87,7 +83,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Generate current command string
 generate_command_string() {
     local cmd_string="REPO_ID=$REPO_ID"
     cmd_string+=" TOOL=$TOOL"
@@ -101,7 +96,6 @@ generate_command_string() {
     echo "$cmd_string"
 }
 
-# Check if aria2, wget, curl are installed
 check_command() {
     if ! command -v $1 &>/dev/null; then
         printf "%b%s is not installed. Please install it first.%b\n" "$RED" "$1" "$NC"
@@ -124,7 +118,6 @@ else
     CUT_DIRS=4
 fi
 
-# Modify API URL, construct based on revision
 if [[ "$REVISION" != "main" ]]; then
     METADATA_API_PATH="$METADATA_API_PATH/revision/$REVISION"
 fi
@@ -132,7 +125,6 @@ API_URL="$HF_ENDPOINT/api/$METADATA_API_PATH"
 
 METADATA_FILE="$LOCAL_DIR/.hfd/repo_metadata.json"
 
-# Fetch and save metadata
 fetch_and_save_metadata() {
     status_code=$(curl -L -s -w "%{http_code}" -o "$METADATA_FILE" ${HF_TOKEN:+-H "Authorization: Bearer $HF_TOKEN"} "$API_URL")
     RESPONSE=$(cat "$METADATA_FILE")
@@ -175,48 +167,42 @@ fi
 should_regenerate_filelist() {
     local command_file="$LOCAL_DIR/.hfd/last_download_command"
     local current_command=$(generate_command_string)
-    
-    # If file list doesn't exist, regenerate
+
     if [[ ! -f "$LOCAL_DIR/$fileslist_file" ]]; then
         echo "$current_command" > "$command_file"
         return 0
     fi
-    
-    # If command file doesn't exist, regenerate
+
     if [[ ! -f "$command_file" ]]; then
         echo "$current_command" > "$command_file"
         return 0
     fi
-    
-    # Compare current command with saved command
+
     local saved_command=$(cat "$command_file")
     if [[ "$current_command" != "$saved_command" ]]; then
         echo "$current_command" > "$command_file"
         return 0
     fi
-    
+
     return 1
 }
 
 fileslist_file=".hfd/${TOOL}_urls.txt"
 
 if should_regenerate_filelist; then
-    # Remove existing file list if it exists
     [[ -f "$LOCAL_DIR/$fileslist_file" ]] && rm "$LOCAL_DIR/$fileslist_file"
-    
+
     printf "%bGenerating file list...%b\n" "$YELLOW" "$NC"
-    
-    # Convert include and exclude patterns to regex
+
     INCLUDE_REGEX=""
     EXCLUDE_REGEX=""
-    if ((${#INCLUDE_PATTERNS[@]})); then
+    if ((${
         INCLUDE_REGEX=$(printf '%s\n' "${INCLUDE_PATTERNS[@]}" | sed 's/\./\\./g; s/\*/.*/g' | paste -sd '|' -)
     fi
-    if ((${#EXCLUDE_PATTERNS[@]})); then
+    if ((${
         EXCLUDE_REGEX=$(printf '%s\n' "${EXCLUDE_PATTERNS[@]}" | sed 's/\./\\./g; s/\*/.*/g' | paste -sd '|' -)
     fi
 
-    # Check if jq is available
     if command -v jq &>/dev/null; then
         process_with_jq() {
             if [[ "$TOOL" == "aria2c" ]]; then
@@ -269,16 +255,16 @@ if should_regenerate_filelist; then
             local include_pattern=""
             local exclude_pattern=""
             local output=""
-            
-            if ((${#INCLUDE_PATTERNS[@]})); then
+
+            if ((${
                 include_pattern=$(printf '%s\n' "${INCLUDE_PATTERNS[@]}" | sed 's/\./\\./g; s/\*/.*/g' | paste -sd '|' -)
             fi
-            if ((${#EXCLUDE_PATTERNS[@]})); then
+            if ((${
                 exclude_pattern=$(printf '%s\n' "${EXCLUDE_PATTERNS[@]}" | sed 's/\./\\./g; s/\*/.*/g' | paste -sd '|' -)
             fi
 
             local files=$(printf '%s' "$RESPONSE" | grep -o '"rfilename":"[^"]*"' | awk -F'"' '{print $4}')
-            
+
             if [[ -n "$include_pattern" ]]; then
                 files=$(printf '%s\n' "$files" | grep -E "$include_pattern")
             fi
@@ -310,7 +296,6 @@ else
     printf "%bResume from file list: $LOCAL_DIR/$fileslist_file%b\n" "$GREEN" "$NC"
 fi
 
-# Perform download
 printf "${YELLOW}Starting download with $TOOL to $LOCAL_DIR...\n${NC}"
 
 cd "$LOCAL_DIR"

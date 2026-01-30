@@ -1,12 +1,3 @@
-"""
-SFT (Supervised Fine-Tuning) 数据准备模块
-
-功能：
-1. 从测试结果中提取错误的题目
-2. 使用 corrected CoT 作为标准答案
-3. 转换为 LLaMA-Factory 需要的 SFT 格式
-"""
-
 import json
 import logging
 from pathlib import Path
@@ -17,7 +8,7 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
-# SFT 训练的 system prompt（与推理时保持一致）
+
 SFT_SYSTEM_PROMPT = """You are an expert in science and visual reasoning with advanced capabilities in multimodal analysis. Your goal is to create a **perfect, highly detailed training example** for a new AI model. Do not summarize or abbreviate. Your reasoning must be **expansive, verbose, and pedagogical**.
         ### Core Principles
         1.  **Extreme Detail.** Prioritize depth over brevity. Explain the "why" and "how" behind every step, even simple ones.
@@ -59,21 +50,11 @@ SFT_SYSTEM_PROMPT = """You are an expert in science and visual reasoning with ad
         * For multiple choice, include the letter and the value.
         * Strictly no reasoning text inside this tag, only the final result.
 
-        Analyze all provided materials carefully. **Write a lengthy, comprehensive, and meticulous response following the strictly defined format above.**
-    """
+        Analyze all provided materials carefully. **Write a lengthy, comprehensive, and meticulous response following the strictly defined format above.**"""
 
 
 
 def normalize_image_paths(image_path_raw: Union[str, List[str], None]) -> List[str]:
-    """
-    标准化图像路径为列表格式
-    
-    Args:
-        image_path_raw: 图像路径（可能是字符串、列表或None）
-        
-    Returns:
-        图像路径列表
-    """
     if isinstance(image_path_raw, list):
         return image_path_raw
     elif isinstance(image_path_raw, str) and image_path_raw:
@@ -83,134 +64,8 @@ def normalize_image_paths(image_path_raw: Union[str, List[str], None]) -> List[s
 
 
 def get_problem_id(problem: Dict[str, Any]) -> str:
-    """
-    获取问题ID
-    
-    Args:
-        problem: 问题字典
-        
-    Returns:
-        问题ID字符串
-    """
     problem_id_val = problem.get('id')
     if problem_id_val is None or problem_id_val == 0:
         return str(hash(problem.get('problem', '')) % 100000)
     else:
         return str(problem_id_val)
-
-
-@dataclass
-class SFTDataPoint:
-    """SFT 数据点"""
-    instruction: str  # 问题/指令
-    response: str  # 正确答案（标准 CoT）
-    images: List[str] = None  # 图像路径列表
-    system: str = None  # system prompt（可选）
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为 ShareGPT SFT 格式"""
-        # ShareGPT SFT 格式：user-assistant 对话
-        data = {
-            "conversations": [
-                {
-                    "from": "user",
-                    "value": self.instruction  # 包含 <image> token 的问题
-                },
-                {
-                    "from": "assistant",
-                    "value": self.response  # corrected CoT
-                }
-            ]
-        }
-        
-        # 添加 system prompt（如果提供）
-        if self.system:
-            data["system"] = self.system
-        
-        # 添加 images 字段（LLaMA-Factory 需要）
-        if self.images:
-            data["images"] = self.images
-        
-        return data
-
-
-class SFTDataBuilder:
-    """SFT 数据构建器"""
-    
-    def __init__(self, config):
-        self.config = config
-        self.logger = logging.getLogger(self.__class__.__name__)
-    
-    def build_sft_dataset(
-        self,
-        wrong_problems: List[Dict[str, Any]],
-        output_file: Path,
-        corrected_cots: Dict[str, str] = None
-    ) -> tuple[int, int]:
-        """
-        构建 SFT 训练数据集
-        
-        Args:
-            wrong_problems: 错题列表
-            output_file: 输出文件路径
-            corrected_cots: 生成的 corrected CoT 字典 (problem_id -> corrected_cot)
-        
-        Returns:
-            (生成的 SFT 数据点数量, 输入的错题数量)
-        """
-        if not wrong_problems:
-            self.logger.warning("No wrong problems provided")
-            return 0, 0
-        
-        self.logger.info(f"Building SFT dataset from {len(wrong_problems)} wrong problems...")
-        
-        sft_data_points = []
-        skipped_count = 0
-        
-        for problem in wrong_problems:
-            problem_id = get_problem_id(problem)
-            
-            # 获取问题文本
-            problem_text = problem.get('problem', '')
-            if not problem_text:
-                self.logger.warning(f"Problem {problem_id}: missing problem text, skipping")
-                skipped_count += 1
-                continue
-            
-            # 获取 corrected CoT（正确答案）
-            if corrected_cots and problem_id in corrected_cots:
-                correct_answer = corrected_cots[problem_id]
-            else:
-                # 如果没有 corrected CoT，跳过该题
-                self.logger.warning(f"Problem {problem_id}: no corrected CoT available, skipping")
-                skipped_count += 1
-                continue
-            
-            # 获取图像路径
-            image_paths = normalize_image_paths(problem.get('image_path'))
-            
-            # 创建 SFT 数据点
-            sanitized_answer = correct_answer.replace("<image>", "the image")
-
-            sft_point = SFTDataPoint(
-                instruction=problem_text,
-                response=sanitized_answer,
-                images=image_paths,
-                system=SFT_SYSTEM_PROMPT
-            )
-            
-            sft_data_points.append(sft_point.to_dict())
-        
-        # 保存数据
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(sft_data_points, f, ensure_ascii=False, indent=2)
-        
-        self.logger.info(f"SFT dataset saved to: {output_file}")
-        self.logger.info(f"  Total SFT data points: {len(sft_data_points)}")
-        self.logger.info(f"  Skipped problems: {skipped_count}")
-        self.logger.info(f"  Success rate: {len(sft_data_points)}/{len(wrong_problems)} "
-                        f"({len(sft_data_points)/len(wrong_problems)*100:.1f}%)")
-        
-        return len(sft_data_points), len(wrong_problems)
-
