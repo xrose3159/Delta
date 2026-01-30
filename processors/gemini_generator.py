@@ -1,3 +1,5 @@
+"""OpenAI-compatible generator for producing harder math problems."""
+
 from __future__ import annotations
 
 import json
@@ -7,10 +9,10 @@ import re
 import os
 from typing import Any, Dict, List, Optional
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+try:  
+    from openai import OpenAI  
+except ImportError:  
+    OpenAI = None 
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +31,37 @@ REASONING_DIFFICULTY_SCALE_TEXT = """
 9: Expert Olympiad (average USAMO, IMO 3/6)
 9.5: Hardest solvable Olympiad (hard USAMO, IMO 3/6)
 10: Extreme research-level style problems (beyond IMO, very long/tedious)
+""".strip()
 
+REASONING_DIFFICULTY_LEVELS: List[float] = [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.0,
+    9.0,
+    10.0,
+    11.0,
+    12.0,
+    13.0,
+]
 
+VISUAL_DIFFICULTY_SCALE_TEXT = """
+**Visual Difficulty Scale (Level 1 - 7):**
+1: Explicit Directness – plain visuals with fully labeled values and no distractions.
+2: Symbolic Implication – relies on geometric/physical symbols (e.g., right-angle marks, circuit symbols).
+3: Implicit Measurement – values encoded via grids, rulers, axes, or chart scales that must be read.
+4: Noise Filtering – cluttered scenes with distractors requiring selective attention.
+5: Spatial Perspective – 3D-to-2D projections, hidden edges, need for spatial reconstruction.
+6: Topological Structure Analysis – dense networks (circuits/graphs) requiring path tracing and connectivity reasoning.
+7: Geometric Transformation & Folding – requires mental rotation, folding, or transformation of the visual input.
+""".strip()
 
 class GeminiHardProblemGenerator:
+    """Generate hard problems via an OpenAI-compatible endpoint."""
 
     def __init__(
         self,
@@ -64,22 +93,19 @@ class GeminiHardProblemGenerator:
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
 
-        try:  # pragma: no cover - network/config dependent
+        try: 
             self.client = OpenAI(**client_kwargs)
             logger.info(
                 "Initialised OpenAI-compatible client (model='%s', base_url='%s')",
                 self.model_name,
                 self.base_url or "default",
             )
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:  
             logger.error("Failed to initialise OpenAI-compatible client: %s", exc)
             self.client = None
 
         self.last_raw_payload: Optional[str] = None
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
     def get_last_payload(self) -> Optional[str]:
         return self.last_raw_payload
 
@@ -92,26 +118,18 @@ class GeminiHardProblemGenerator:
             return []
 
         self.last_raw_payload = None
-
-        # 添加进度日志
+        
         if image_path:
             logger.info("🤖 Calling Gemini API with IMAGE for category '%s'... (this may take 10-60 seconds)", category_name)
         else:
             logger.info("🤖 Calling Gemini API to generate %d problems for category '%s'... (this may take 10-60 seconds)", quota, category_name)
 
-        try:  # pragma: no cover - network dependent
-            # 构建消息内容
+        try:  
             user_content = prompt
-
-            # 如果有图片，使用多模态格式
             if image_path and os.path.exists(image_path):
                 import base64
-
-                # 读取并编码图片
                 with open(image_path, 'rb') as f:
                     image_data = base64.b64encode(f.read()).decode('utf-8')
-
-                # 检测图片格式
                 image_ext = os.path.splitext(image_path)[1].lower()
                 mime_type = {
                     '.jpg': 'image/jpeg',
@@ -120,8 +138,6 @@ class GeminiHardProblemGenerator:
                     '.gif': 'image/gif',
                     '.webp': 'image/webp'
                 }.get(image_ext, 'image/jpeg')
-
-                # 多模态消息格式
                 user_content = [
                     {
                         "type": "text",
@@ -135,7 +151,7 @@ class GeminiHardProblemGenerator:
                     }
                 ]
                 logger.debug("Added image to request: %s (type: %s)", image_path, mime_type)
-
+            
             request_kwargs: Dict[str, Any] = {
                 "model": self.model_name,
                 "messages": [
@@ -162,11 +178,10 @@ class GeminiHardProblemGenerator:
                 request_kwargs.setdefault("extra_body", {})["max_output_tokens"] = self.max_output_tokens
 
             response = self.client.chat.completions.create(**request_kwargs)
-
-            # 添加成功日志
-            logger.info("✅ Gemini API call completed for category '%s'", category_name)
-
-        except Exception as exc:  # pragma: no cover
+            
+            logger.info(" Gemini API call completed for category '%s'", category_name)
+            
+        except Exception as exc:  
             logger.error(
                 "Gemini generation failed for category %s (quota=%s): %s",
                 category_name,
@@ -206,15 +221,14 @@ class GeminiHardProblemGenerator:
             question = item.get("question")
             answer = item.get("answer")
             image_code = item.get("image_code")
-            difficulty_type = item.get("difficulty_type")  # 提取 difficulty_type
-
-            # 调试日志：检查 Gemini 是否返回了 difficulty_type
+            difficulty_type = item.get("difficulty_type")  
+            
             if difficulty_type:
                 logger.debug("Gemini returned difficulty_type: '%s'", difficulty_type)
             else:
-                logger.warning("Gemini did NOT return difficulty_type field for a problem in category %s. Item keys: %s",
+                logger.warning("Gemini did NOT return difficulty_type field for a problem in category %s. Item keys: %s", 
                              category_name, list(item.keys()))
-
+            
             if isinstance(question, str) and isinstance(answer, str):
                 question = question.strip()
                 answer = answer.strip()
@@ -226,7 +240,6 @@ class GeminiHardProblemGenerator:
                     entry: Dict[str, str] = {"question": question, "answer": answer}
                     if image_code:
                         entry["image_code"] = image_code
-                    # 添加 difficulty_type 字段（如果存在）
                     if isinstance(difficulty_type, str) and difficulty_type.strip():
                         entry["difficulty_type"] = difficulty_type.strip()
                     results.append(entry)
@@ -237,7 +250,7 @@ class GeminiHardProblemGenerator:
             logger.warning("Gemini returned no usable problems for category %s.", category_name)
         else:
             logger.info("📝 Successfully generated %d problems for category '%s' (requested: %d)", len(results), category_name, quota)
-
+        
         return results
 
     @staticmethod
@@ -245,7 +258,6 @@ class GeminiHardProblemGenerator:
         if response is None:
             return None
 
-        # New OpenAI SDK 1.x returns objects with `.choices[0].message.content`
         choices = getattr(response, "choices", None)
         if isinstance(choices, list) and choices:
             message = getattr(choices[0], "message", None)
@@ -266,8 +278,6 @@ class GeminiHardProblemGenerator:
                                 parts.append(text)
                     if parts:
                         return "".join(parts)
-
-        # Some proxy implementations provide `response.output_text`
         output_text = getattr(response, "output_text", None)
         if isinstance(output_text, str) and output_text.strip():
             return output_text
@@ -276,6 +286,7 @@ class GeminiHardProblemGenerator:
 
     @staticmethod
     def _close_json_fragment(fragment: str) -> str:
+        """Balance braces/brackets/quotes in a JSON fragment as best as possible."""
 
         fragment = (fragment or "").strip()
         if not fragment:
@@ -306,14 +317,13 @@ class GeminiHardProblemGenerator:
     @staticmethod
     def _sanitize_candidate(candidate: str) -> str:
         candidate = GeminiHardProblemGenerator._close_json_fragment(candidate)
-        # Ensure colon-delimited pairs are properly closed with quotes
         candidate = re.sub(r'"question":\s*"([^"\\]*(?:\\.[^"\\]*)*)$', r'"question": "\1"', candidate)
         candidate = re.sub(r'"answer":\s*"([^"\\]*(?:\\.[^"\\]*)*)$', r'"answer": "\1"', candidate)
-        # Escape stray single backslashes that would break JSON decoding
         candidate = re.sub(r'(?<!\\)\\(?![\\/"bfnrtu])', r'\\\\', candidate)
         return candidate
 
     def _parse_json_payload(self, text: str, category_name: str) -> Optional[Dict[str, Any]]:
+        """Attempt to decode Gemini payload using several fallbacks."""
 
         if not text:
             return None
@@ -321,13 +331,11 @@ class GeminiHardProblemGenerator:
         base = self._sanitize_candidate(text)
         candidates = [base]
 
-        # Remove trailing commas before closing braces/brackets
         cleaned = re.sub(r",\s*([}\]])", r"\1", base)
         if cleaned != base:
             candidates.append(cleaned)
             candidates.append(self._sanitize_candidate(cleaned))
 
-        # Attempt to close the last string if the final token is unterminated
         if candidates:
             last_candidate = candidates[-1]
             stripped = last_candidate.rstrip()
@@ -372,7 +380,6 @@ class GeminiHardProblemGenerator:
 
         text = payload.strip()
 
-        # Remove common markdown code fences
         if text.startswith("```"):
             parts = text.splitlines()
             if parts:
@@ -381,7 +388,6 @@ class GeminiHardProblemGenerator:
                 parts = parts[:-1]
             text = "\n".join(parts).strip()
 
-        # Extract the first balanced JSON object
         start = text.find("{")
         if start != -1:
             fragment = GeminiHardProblemGenerator._extract_balanced_json(text, start)
@@ -427,21 +433,11 @@ class GeminiHardProblemGenerator:
         original_code: str,
         error_message: str,
     ) -> Optional[str]:
-        当图片代码执行失败时，将错误信息反馈给 Gemini，让它修复代码
-
-        Args:
-            question: 问题文本
-            answer: 答案
-            original_code: 原始的有问题的代码
-            error_message: 错误信息
-
-        Returns:
-            修复后的代码，如果修复失败则返回 None
         if not self.client:
             return None
-
+        
         prompt = self._build_fix_code_prompt(question, answer, original_code, error_message)
-
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
@@ -449,13 +445,12 @@ class GeminiHardProblemGenerator:
                 max_tokens=self.max_output_tokens or self.max_tokens,
                 temperature=0.7,
             )
-
+            
             content = response.choices[0].message.content
             if not content:
                 logger.warning("Gemini returned empty response for code fix")
                 return None
-
-            # 提取修复后的代码
+            
             fixed_code = self._extract_code_from_response(content)
             if fixed_code:
                 logger.info("Successfully got fixed code from Gemini")
@@ -463,11 +458,11 @@ class GeminiHardProblemGenerator:
             else:
                 logger.warning("Could not extract fixed code from Gemini response")
                 return None
-
+                
         except Exception as exc:
             logger.error("Failed to get code fix from Gemini: %s", exc)
             return None
-
+    
     def _build_fix_code_prompt(
         self,
         question: str,
@@ -501,9 +496,9 @@ class GeminiHardProblemGenerator:
 6. **EXTREMELY IMPORTANT**: Carefully check ALL variable names - every variable MUST be defined before use!
 
 **Common Fixes:**
-- If error mentions 'rgba': Change 'rgba(255,0,0,0.5)' to (1.0, 0.0, 0.0, 0.5) or '
+- If error mentions 'rgba': Change 'rgba(255,0,0,0.5)' to (1.0, 0.0, 0.0, 0.5) or '#FF0000'
 - If error mentions LaTeX/ParseFatalException: Use raw strings r'$...$' for math expressions
-- **If error mentions undefined variable (NameError)**:
+- **If error mentions undefined variable (NameError)**: 
   * Carefully read through ALL the code
   * Find where the variable is used
   * Make sure it is defined BEFORE that line
@@ -520,17 +515,13 @@ class GeminiHardProblemGenerator:
 Fixed code:"""
 
     def _extract_code_from_response(self, response: str) -> Optional[str]:
-        # 尝试提取 markdown 代码块
         code_block_pattern = r"```(?:python)?\s*\n(.*?)\n```"
         matches = re.findall(code_block_pattern, response, re.DOTALL)
         if matches:
             return matches[0].strip()
-
-        # 如果没有代码块，尝试查找包含 import 的代码
+        
         if "import" in response and "plt.savefig" in response:
-            # 假设整个响应就是代码
             lines = response.strip().split("\n")
-            # 移除可能的说明文字（通常在开头）
             code_lines = []
             started = False
             for line in lines:
@@ -540,7 +531,7 @@ Fixed code:"""
                     code_lines.append(line)
             if code_lines:
                 return "\n".join(code_lines).strip()
-
+        
         return None
 
     def upgrade_problem_difficulty(
@@ -556,27 +547,8 @@ Fixed code:"""
         target_reasoning_level: Optional[float] = None,
         target_visual_level: Optional[float] = None,
     ) -> Optional[Dict[str, str]]:
-        升级题目难度
-
-        根据指定的难度方面（reasoning 或 visual）生成难度升级版本
-
-        Args:
-            problem: 原题目问题
-            answer: 原题目答案
-            image_path: 原题目图片路径
-            category_id: 类别 ID
-            category_name: 类别名称
-            difficulty_aspect: 难度方面（"reasoning" 或 "visual"）
-            current_reasoning_level: 题目当前的推理难度标签
-            current_visual_level: 题目当前的视觉难度标签
-            target_reasoning_level: 本次生成期望达到的推理难度
-            target_visual_level: 本次生成期望达到的视觉难度
-
-        Returns:
-            包含 question, answer, image_code 的字典，失败返回 None
         logger.info("Upgrading problem difficulty (aspect: %s)", difficulty_aspect)
-
-        # 构建 prompt
+        
         if difficulty_aspect == "reasoning":
             difficulty_instruction = """
 **Upgrade Type**: REASONING DIFFICULTY
@@ -592,6 +564,7 @@ Example upgrades:
   - Simple calculation → Multi-step calculation with intermediate variables
   - Single condition → Multiple conditions that must be satisfied
   - Direct formula → Requires deriving or combining formulas
+"""
         elif difficulty_aspect == "visual":
             difficulty_instruction = """
 **Upgrade Type**: VISUAL DIFFICULTY
@@ -605,6 +578,7 @@ Example upgrades:
   - Single object → Multiple overlapping objects
   - 2D → More complex 2D or pseudo-3D representation
   - Clear labels → Implied or partially labeled elements
+"""
         elif difficulty_aspect == "similar":
             difficulty_instruction = """
 **Upgrade Type**: SIMILAR DIFFICULTY (Different Content for Diversity)
@@ -617,20 +591,21 @@ Example variations:
   - Triangle area → Rectangle perimeter (same difficulty, different shape)
   - Speed problem with car → Speed problem with train (same logic, different context)
   - Algebra with x,y → Algebra with a,b (same structure, different variables)
+"""
         else:
-
             difficulty_instruction = """
 **Upgrade Type**: GENERAL DIFFICULTY
 - Increase the complexity of the problem
 - Add more steps or complexity
-
+"""
+        
         def _format_level(value: Optional[float | int]) -> Optional[str]:
             if value is None:
                 return None
             if isinstance(value, (int, float)):
                 return format(value, "g")
             return str(value)
-
+        
         level_guidance_lines = []
         formatted_current_reasoning = _format_level(current_reasoning_level)
         formatted_target_reasoning = _format_level(target_reasoning_level)
@@ -647,7 +622,7 @@ Example variations:
             and formatted_current_visual
             and formatted_target_visual != formatted_current_visual
         )
-
+        
         if formatted_current_reasoning and reasoning_upgrade_possible:
             level_guidance_lines.append(f"- Current reasoning level: {formatted_current_reasoning}")
         if reasoning_upgrade_possible and formatted_target_reasoning:
@@ -664,7 +639,7 @@ Example variations:
             level_guidance_lines.append(
                 "- Visual difficulty is already at the top label; nevertheless, increase the visual complexity beyond the current depiction."
             )
-
+        
         if level_guidance_lines:
             level_guidance_lines.append(
                 "- Match the target levels precisely. Only change the aspect being upgraded."
@@ -672,7 +647,7 @@ Example variations:
             level_guidance = "\n".join(["**Difficulty Level Guidance:**", *level_guidance_lines])
         else:
             level_guidance = ""
-
+        
         prompt = f"""You are an expert at creating challenging math problems.
 
 **Original Problem:**
@@ -725,8 +700,7 @@ Output ONLY the JSON (no explanations):"""
             if self.client is None:
                 logger.warning("Gemini client unavailable. Cannot upgrade problem.")
                 return None
-
-            # 使用 OpenAI 兼容的客户端
+            
             request_kwargs: Dict[str, Any] = {
                 "model": self.model_name,
                 "messages": [
@@ -751,44 +725,42 @@ Output ONLY the JSON (no explanations):"""
             }
             if self.max_output_tokens:
                 request_kwargs.setdefault("extra_body", {})["max_output_tokens"] = self.max_output_tokens
-
+            
             response = self.client.chat.completions.create(**request_kwargs)
-
-            # 提取响应文本
+            
             response_text = self._extract_text_response(response)
             if not response_text:
                 logger.warning("Empty response from Gemini for upgrade")
                 return None
-
+            
             logger.debug("Gemini response (first 200 chars): %s", response_text[:200])
-
-            # 规范化并解析 JSON
+            
             normalized = self._normalise_payload(response_text)
             if not normalized:
                 logger.warning("Failed to normalize Gemini response for upgrade")
                 return None
-
+            
             result = self._parse_json_payload(normalized, f"upgrade_{difficulty_aspect}")
             if not result or not isinstance(result, dict):
                 logger.warning("Failed to parse JSON from upgrade response")
                 return None
-
-            # 验证必需字段
+            
             if "question" not in result or "answer" not in result:
                 logger.warning("Missing required fields in upgrade response: %s", list(result.keys()))
                 return None
-
-            # 确保 answer 和 question 是字符串
+            
             result["question"] = str(result.get("question", "")).strip()
             result["answer"] = str(result.get("answer", "")).strip()
             if "image_code" in result:
                 result["image_code"] = str(result.get("image_code", "")).strip()
-
+            
             logger.info("✅ Successfully upgraded problem (difficulty: %s)", difficulty_aspect)
             return result
-
+            
         except Exception as exc:
             logger.error("Failed to upgrade problem difficulty: %s", exc)
             import traceback
             logger.debug("Full traceback: %s", traceback.format_exc())
             return None
+
+

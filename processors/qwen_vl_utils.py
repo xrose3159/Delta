@@ -42,20 +42,25 @@ MODEL_SEQ_LEN = int(float(os.environ.get('MODEL_SEQ_LEN', 128000)))
 logger = logging.getLogger(__name__)
 
 def round_by_factor(number: int, factor: int) -> int:
+    """Returns the closest integer to 'number' that is divisible by 'factor'."""
     return round(number / factor) * factor
 
 def ceil_by_factor(number: int, factor: int) -> int:
+    """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
     return math.ceil(number / factor) * factor
 
 def floor_by_factor(number: int, factor: int) -> int:
+    """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
     return math.floor(number / factor) * factor
 
 def smart_resize(height: int, width: int, factor: int, min_pixels: Optional[int] = None, max_pixels: Optional[int] = None) -> Tuple[int, int]:
+    """
     Rescales the image so that the following conditions are met:
 
     1. Both dimensions (height and width) are divisible by 'factor'.
     2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
     3. The aspect ratio of the image is maintained as closely as possible.
+    """
     max_pixels = max_pixels if max_pixels is not None else (IMAGE_MAX_TOKEN_NUM * factor ** 2)
     min_pixels = min_pixels if min_pixels is not None else (IMAGE_MIN_TOKEN_NUM * factor ** 2)
     assert max_pixels >= min_pixels, "The max_pixels of image must be greater than or equal to min_pixels."
@@ -112,7 +117,6 @@ def fetch_image(ele: Dict[str, Union[str, Image.Image]], image_patch_size: int =
         raise ValueError(f"Unrecognized image input, support local path, http url, base64 and PIL.Image, got {image}")
     image = to_rgb(image_obj)
 
-
     if "resized_height" in ele and "resized_width" in ele:
         resized_height, resized_width = smart_resize(
             ele["resized_height"],
@@ -138,6 +142,45 @@ def smart_nframes(
     total_frames: int,
     video_fps: Union[int, float],
 ) -> int:
+    """calculate the number of frames for video used for model inputs.
+
+    Args:
+        ele (dict): a dict contains the configuration of video.
+            support either `fps` or `nframes`:
+                - nframes: the number of frames to extract for model inputs.
+                - fps: the fps to extract frames for model inputs.
+                    - min_frames: the minimum number of frames of the video, only used when fps is provided.
+                    - max_frames: the maximum number of frames of the video, only used when fps is provided.
+        total_frames (int): the original total number of frames of the video.
+        video_fps (int | float): the original fps of the video.
+
+    Raises:
+        ValueError: nframes should in interval [FRAME_FACTOR, total_frames].
+
+    Returns:
+        int: the number of frames for video used for model inputs.
+    """
+    assert not ("fps" in ele and "nframes" in ele), "Only accept either `fps` or `nframes`"
+    if "nframes" in ele:
+        nframes = round_by_factor(ele["nframes"], FRAME_FACTOR)
+    else:
+        fps = ele.get("fps", FPS)
+        min_frames = ceil_by_factor(ele.get("min_frames", FPS_MIN_FRAMES), FRAME_FACTOR)
+        max_frames = floor_by_factor(ele.get("max_frames", min(FPS_MAX_FRAMES, total_frames)), FRAME_FACTOR)
+        nframes = total_frames / video_fps * fps
+        if nframes > total_frames:
+            logger.warning(f"smart_nframes: nframes[{nframes}] > total_frames[{total_frames}]")
+        nframes = min(min(max(nframes, min_frames), max_frames), total_frames)
+        nframes = floor_by_factor(nframes, FRAME_FACTOR)
+    if not (FRAME_FACTOR <= nframes and nframes <= total_frames):
+        raise ValueError(f"nframes should in interval [{FRAME_FACTOR}, {total_frames}], but got {nframes}.")
+    return nframes
+
+def _read_video_torchvision(
+    ele: Dict[str, Any],
+) -> Tuple[torch.Tensor, float]:
+    """read video using torchvision.io.read_video
+
     Args:
         ele (dict): a dict contains the configuration of video.
         support keys:
@@ -146,6 +189,7 @@ def smart_nframes(
             - video_end: the end time of video.
     Returns:
         torch.Tensor: the video tensor with shape (T, C, H, W).
+    """
     video_path = ele["video"]
     if version.parse(torchvision.__version__) < version.parse("0.19.0"):
         if "http://" in video_path or "https://" in video_path:
@@ -185,6 +229,7 @@ def calculate_video_frame_range(
     total_frames: int,
     video_fps: float,
 ) -> Tuple[int, int, int]:
+    """
     Calculate the start and end frame indices based on the given time range.
 
     Args:
@@ -197,12 +242,11 @@ def calculate_video_frame_range(
 
     Raises:
         ValueError: If input parameters are invalid or the time range is inconsistent.
-
+    """
     if video_fps <= 0:
         raise ValueError("video_fps must be a positive number")
     if total_frames <= 0:
         raise ValueError("total_frames must be a positive integer")
-
 
     video_start = ele.get("video_start", None)
     video_end = ele.get("video_end", None)
@@ -210,20 +254,17 @@ def calculate_video_frame_range(
         return 0, total_frames - 1, total_frames
 
     max_duration = total_frames / video_fps
-
     if video_start is not None:
         video_start_clamped = max(0.0, min(video_start, max_duration))
         start_frame = math.ceil(video_start_clamped * video_fps)
     else:
         start_frame = 0
-
     if video_end is not None:
         video_end_clamped = max(0.0, min(video_end, max_duration))
         end_frame = math.floor(video_end_clamped * video_fps)
         end_frame = min(end_frame, total_frames - 1)
     else:
         end_frame = total_frames - 1
-
 
     if start_frame >= end_frame:
         raise ValueError(
@@ -238,6 +279,8 @@ def calculate_video_frame_range(
 def _read_video_decord(
     ele: Dict[str, Any],
 ) -> Tuple[torch.Tensor, float]:
+    """read video using decord.VideoReader
+
     Args:
         ele (dict): a dict contains the configuration of video.
         support keys:
@@ -246,6 +289,51 @@ def _read_video_decord(
             - video_end: the end time of video.
     Returns:
         torch.Tensor: the video tensor with shape (T, C, H, W).
+    """
+    import decord
+    video_path = ele["video"]
+    st = time.time()
+    vr = decord.VideoReader(video_path)
+    total_frames, video_fps = len(vr), vr.get_avg_fps()
+    start_frame, end_frame, total_frames = calculate_video_frame_range(
+        ele,
+        total_frames,
+        video_fps,
+    )
+    nframes = smart_nframes(ele, total_frames=total_frames, video_fps=video_fps)
+    idx = torch.linspace(start_frame, end_frame, nframes).round().long().tolist()
+    video = vr.get_batch(idx).asnumpy()
+    video = torch.tensor(video).permute(0, 3, 1, 2)
+    logger.info(f"decord:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
+    sample_fps = nframes / max(total_frames, 1e-6) * video_fps
+
+    video_metadata = dict(
+        fps=video_fps,
+        frames_indices=idx,
+        total_num_frames=total_frames,
+        video_backend="decord",
+    )
+    return video, video_metadata, sample_fps
+
+def is_torchcodec_available() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("torchcodec") is not None
+
+def _read_video_torchcodec(
+    ele: Dict[str, Any],
+) -> Tuple[torch.Tensor, float]:
+    """read video using torchcodec.decoders.VideoDecoder
+
+    Args:
+        ele (dict): a dict contains the configuration of video.
+        support keys:
+            - video: the path of video. support "file://", "http://", "https://" and local path.
+            - video_start: the start time of video.
+            - video_end: the end time of video.
+    Returns:
+        torch.Tensor: the video tensor with shape (T, C, H, W).
+    """
     from torchcodec.decoders import VideoDecoder
     TORCHCODEC_NUM_THREADS = int(os.environ.get('TORCHCODEC_NUM_THREADS', 8))
     logger.info(f"set TORCHCODEC_NUM_THREADS: {TORCHCODEC_NUM_THREADS}")
@@ -307,12 +395,10 @@ def fetch_video(ele: Dict[str, Any], image_patch_size: int = 14, return_video_sa
             logger.warning(f"video_reader_backend {video_reader_backend} error, use torchvision as default, msg: {e}")
             video, video_metadata, sample_fps = VIDEO_READER_BACKENDS["torchvision"](ele)
     else:
-
         assert isinstance(ele["video"], (list, tuple))
         process_info = ele.copy()
         process_info.pop("type", None)
         process_info.pop("video", None)
-
         max_workers = min(MAX_NUM_WORKERS_FETCH_VIDEO, len(ele["video"]))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
@@ -330,8 +416,6 @@ def fetch_video(ele: Dict[str, Any], image_patch_size: int = 14, return_video_sa
             torch.from_numpy(np.array(image).transpose(2, 0, 1))
             for image in image_list
         ])
-
-
         raw_fps = process_info.pop("raw_fps", sample_fps)
         video_metadata = dict(
             fps=raw_fps,
@@ -398,7 +482,6 @@ def process_vision_info(
 ) -> Tuple[Optional[List[Image.Image]], Optional[List[Union[torch.Tensor, List[Image.Image]]]], Optional[Dict[str, Any]]]:
 
     vision_infos = extract_vision_info(conversations)
-
     image_inputs = []
     video_inputs = []
     video_sample_fps_list = []
@@ -418,7 +501,7 @@ def process_vision_info(
         video_inputs = None
 
     video_kwargs = {'do_sample_frames': False}
-    if not return_video_metadata:
+    if not return_video_metadata: 
         video_kwargs.update({'fps': video_sample_fps_list})
 
     if return_video_kwargs:

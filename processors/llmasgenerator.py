@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Generate answers for a JSON dataset with vLLM."""
+
 from __future__ import annotations
 
 import argparse
@@ -12,45 +15,35 @@ import time
 import threading
 
 
-
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-os.environ["HF_DATASETS_OFFLINE"] = "1"
-
+os.environ["HF_HUB_OFFLINE"] = "1"  
+os.environ["TRANSFORMERS_OFFLINE"] = "1" 
+os.environ["HF_DATASETS_OFFLINE"] = "1"  
 
 
 if "APPTAINER_NAME" in os.environ or "SINGULARITY_NAME" in os.environ:
-
 
     os.environ["CC"] = "/usr/bin/gcc"
     os.environ["CXX"] = "/usr/bin/g++"
     os.environ["CUDA_HOME"] = "/usr/local/cuda"
 
-
     triton_cache_dir = f"/tmp/triton_cache_{os.getenv('USER', 'default')}_{os.getpid()}"
     os.environ.setdefault("TRITON_CACHE_DIR", triton_cache_dir)
-
-
+    
     if "PATH" in os.environ:
         path_parts = os.environ["PATH"].split(":")
-        clean_paths = [p for p in path_parts if "/path/to/models" not in p]
-
+        clean_paths = [p for p in path_parts if "/share/gcc" not in p]
         clean_paths = ["/opt/py312/bin", "/usr/local/cuda/bin", "/usr/bin", "/bin"] + clean_paths
-        os.environ["PATH"] = ":".join(dict.fromkeys(clean_paths))
-
-
+        os.environ["PATH"] = ":".join(dict.fromkeys(clean_paths))  
     if "LD_LIBRARY_PATH" in os.environ:
         ld_paths = os.environ["LD_LIBRARY_PATH"].split(":")
-        clean_paths = [p for p in ld_paths if not p.startswith("/path/to/models")]
+        clean_paths = [p for p in ld_paths if not p.startswith("/share/")]
         os.environ["LD_LIBRARY_PATH"] = ":".join(clean_paths)
-
-
+    
     ld_path_prefix = "/usr/local/cuda/lib64:/.singularity.d/libs"
     if "LD_LIBRARY_PATH" in os.environ:
         os.environ["LD_LIBRARY_PATH"] = f"{ld_path_prefix}:{os.environ['LD_LIBRARY_PATH']}"
     else:
         os.environ["LD_LIBRARY_PATH"] = ld_path_prefix
-
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -59,7 +52,6 @@ sys.path.insert(0, str(project_root))
 try:
     from adaptive_training.processors.qwen_vl_utils import process_vision_info
 except ImportError:
-
     try:
         from .qwen_vl_utils import process_vision_info
     except ImportError:
@@ -68,14 +60,14 @@ except ImportError:
 from vllm import LLM, SamplingParams
 
 try:
-    from tqdm import tqdm
-except ImportError:
-    tqdm = lambda x, **_: x
+    from tqdm import tqdm  
+except ImportError:  
+    tqdm = lambda x, **_: x 
 
 try:
-    from transformers import AutoProcessor
-except ImportError as exc:
-    AutoProcessor = None
+    from transformers import AutoProcessor  
+except ImportError as exc: 
+    AutoProcessor = None  
     _AUTO_PROCESSOR_IMPORT_ERROR = exc
 else:
     _AUTO_PROCESSOR_IMPORT_ERROR = None
@@ -85,6 +77,7 @@ else:
 
 PROMPT_TEMPLATE = """
 {query}
+"""
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -103,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model-path",
-        default="/path/to/user/Qwen3-VL-30B-A3B-Thinking",
+        default="./models/Qwen3-VL-30B-A3B-Thinking", 
         help="Path or name of the vLLM-compatible model to load.",
     )
     parser.add_argument(
@@ -251,10 +244,8 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-# 2. 准备请求格式，将文本与图像整理为multi_modal_data
 def prepare_messages(prompt: str, image_paths: Sequence[Path], is_error_analysis: bool = False, is_correction: bool = False) -> List[Dict[str, Any]]:
     if is_error_analysis:
-        # 错误分析任务的 system prompt：分析学生错误是 caption 问题还是 reasoning 问题
         system_content = (
             "You are an expert evaluator analyzing student errors in math problems.\n\n"
             "**Your Task:**\n"
@@ -275,11 +266,8 @@ def prepare_messages(prompt: str, image_paths: Sequence[Path], is_error_analysis
             "**CRITICAL**: Your response MUST end with either <caption_error> or <reasoning_error>. "
             "This tag is mandatory and must appear at the very end of your analysis."
         )
-        #     system_content = (
-        #     "You are a helpful assistant."
-        # )
+
     else:
-        # 正常解题任务的system prompt - 使用三部分结构化输出格式
         system_content = """
             You are an expert in science and visual reasoning with advanced capabilities in multimodal analysis.
             Your goal is to create a **perfect, highly detailed training example** for a new AI model.
@@ -327,9 +315,6 @@ def prepare_messages(prompt: str, image_paths: Sequence[Path], is_error_analysis
 
             Analyze all provided materials carefully. **Write a lengthy, comprehensive, and meticulous response following the strictly defined format above.**
         # """
-        # system_content = """
-        #     You are a helpful assistant.
-        # """
     messages: List[Dict[str, Any]] = [
         {
             "role": "system",
@@ -362,10 +347,11 @@ def prepare_request(
     is_error_analysis: bool = False,
     is_correction: bool = False,
 ) -> Dict[str, Any]:
+    """Build a vLLM request dictionary containing the prompt and optional multi-modal data."""
 
     messages = prepare_messages(prompt, image_paths, is_error_analysis=is_error_analysis, is_correction=is_correction)
 
-    prompt_text = processor.apply_chat_template(  # type: ignore[union-attr]
+    prompt_text = processor.apply_chat_template(  
         messages,
         tokenize=False,
         add_generation_prompt=True,
@@ -414,13 +400,13 @@ def _to_path_list(
     if value is None:
         return []
     if isinstance(value, str):
-        # 过滤空字符串 - 空字符串会被解析为当前目录导致错误
+    
         return [value] if value else []
     if isinstance(value, Sequence):
         result: List[str] = []
         for item in value:
             if isinstance(item, str):
-                # 过滤空字符串
+           
                 if item:
                     result.append(item)
             else:
@@ -531,15 +517,15 @@ def prepare_llm(args: argparse.Namespace) -> LLM:
     if args.dtype != "auto":
         llm_kwargs["dtype"] = args.dtype
     logging.info("Initialising LLM from %s", args.model_path)
-    llm_kwargs['max_model_len'] = args.max_model_len if args.max_model_len else 32768
+    llm_kwargs['max_model_len'] = args.max_model_len if args.max_model_len else 32768  
     llm_kwargs['gpu_memory_utilization'] = args.gpu_memory_utilization if args.gpu_memory_utilization is not None else 0.7
     logging.info("Using max_model_len=%d, gpu_memory_utilization=%.2f", llm_kwargs['max_model_len'], llm_kwargs['gpu_memory_utilization'])
-
+    
     llm_kwargs['enforce_eager'] = False  # 启用 CUDA Graph
-    llm_kwargs['enable_prefix_caching'] = True
+    llm_kwargs['enable_prefix_caching'] = True  
     llm_kwargs['enable_chunked_prefill'] = True
 
-
+    
     return LLM(**llm_kwargs)
 
 
@@ -603,22 +589,20 @@ def run() -> None:
     logging.info("Preparing to process %s records", len(pending_records))
 
     try:
-        # 强制使用本地文件，避免 HF 路径验证问题
-        # 使用 _commit_hash=None 跳过缓存检查
         processor = AutoProcessor.from_pretrained(  # type: ignore[union-attr]
             args.model_path,
             trust_remote_code=args.trust_remote_code,
             local_files_only=True,
-            token=False,  # 禁用 HF token
-            _commit_hash=None,  # 跳过缓存检查，直接使用本地文件
+            token=False,  
+            _commit_hash=None,  
         )
     except Exception as exc:
         raise RuntimeError(f"Failed to load processor for model '{args.model_path}': {exc}") from exc
 
     jobs = []
-    enable_thinking = not args.disable_thinking  # 如果指定了 --disable-thinking，则禁用thinking mode
-    is_error_analysis = args.is_error_analysis  # 是否为错误分析任务
-    is_correction = args.is_correction  # 是否为生成 corrected CoT 任务
+    enable_thinking = not args.disable_thinking  
+    is_error_analysis = args.is_error_analysis  
+    is_correction = args.is_correction 
     for idx, record, query, image_paths in pending_records:
         prompt = build_prompt(query, args.prompt_template)
         try:
@@ -649,33 +633,26 @@ def run() -> None:
     sampling_params = build_sampling_params(args)
 
     requests = [item[2] for item in jobs]
-    # 强制刷新输出，确保进度信息能及时显示
     sys.stdout.flush()
     sys.stderr.flush()
     logging.info("Starting generation for %s requests...", len(requests))
-    logging.info("Sampling params: max_tokens=%d, temperature=%.2f, top_p=%.2f",
+    logging.info("Sampling params: max_tokens=%d, temperature=%.2f, top_p=%.2f", 
                  sampling_params.max_tokens, sampling_params.temperature, sampling_params.top_p)
-
-    # 计算预估超时时间：每个请求最多 max_tokens，加上缓冲时间
-    # 对于大模型（235B），每个token生成可能需要较长时间
-    estimated_time_per_token = 0.1  # 秒（保守估计，实际可能更快或更慢）
+    
+    estimated_time_per_token = 0.1 
     estimated_total_time = len(requests) * sampling_params.max_tokens * estimated_time_per_token
-    # 设置超时时间为预估时间的2倍，但最少1小时，最多24小时（适应大规模数据集）
     timeout_seconds = max(3600, min(86400, int(estimated_total_time * 2)))
-    logging.info("⏱️  Estimated generation time: %.1f minutes (timeout set to %.1f minutes)",
+    logging.info("⏱️  Estimated generation time: %.1f minutes (timeout set to %.1f minutes)", 
                  estimated_total_time / 60, timeout_seconds / 60)
     sys.stdout.flush()
-
-    # 使用线程和超时机制来防止卡死
+    
     outputs = None
     generation_error = None
     generation_completed = threading.Event()
-
+    
     def run_generation():
         nonlocal outputs, generation_error
         try:
-            # ⚠️ 关键：一次性提交所有请求，让 vLLM 并行处理
-            # 即使使用同步 API，async_scheduling=True 也会让 vLLM 内部并行处理
             logging.info("🔄 Starting vLLM generation (this may take a long time for large max_tokens)...")
             sys.stdout.flush()
             outputs = llm.generate(requests, sampling_params=sampling_params, use_tqdm=True)
@@ -683,35 +660,30 @@ def run() -> None:
         except Exception as e:
             generation_error = e
             generation_completed.set()
-
+    
     generation_thread = threading.Thread(target=run_generation, daemon=True)
     generation_thread.start()
-
-    # 定期输出进度信息（每5分钟）并检查超时
-    progress_interval = 300  # 5分钟
+    
+    progress_interval = 300 
     start_time = time.time()
-
+    
     while not generation_completed.is_set():
         elapsed = time.time() - start_time
         remaining_timeout = timeout_seconds - elapsed
-
+        
         if remaining_timeout <= 0:
-            # 超时了
             break
+        
 
-        # 等待进度间隔或剩余超时时间（取较小值）
         wait_time = min(progress_interval, remaining_timeout)
         if generation_completed.wait(timeout=wait_time):
-            # 生成完成
             break
-
-        # 输出进度信息
+        
         elapsed = time.time() - start_time
         logging.info(f"⏳ Generation still in progress... (elapsed: {elapsed/60:.1f} minutes)")
         logging.info(f"   Remaining timeout: {(timeout_seconds - elapsed)/60:.1f} minutes")
         sys.stdout.flush()
 
-    # 检查是否超时
     elapsed = time.time() - start_time
     if not generation_completed.is_set():
         logging.error(f"❌ Generation timeout after {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
@@ -724,13 +696,13 @@ def run() -> None:
         sys.stdout.flush()
         sys.stderr.flush()
         raise RuntimeError(f"Generation timeout after {elapsed:.1f} seconds")
-
+    
     if generation_error:
         raise generation_error
-
+    
     if outputs is None:
         raise RuntimeError("Generation completed but outputs is None")
-
+    
     sys.stdout.flush()
     sys.stderr.flush()
     logging.info("Generation completed, processing outputs...")

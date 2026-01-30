@@ -79,19 +79,23 @@ Determine whether the two answers express the same correct solution. Focus on me
 ## OUTPUT INSTRUCTIONS
 Respond in the following two-line format (no extra text):
 Analysis: <concise reasoning>
-JUDGMENT: <EQUIVALENT or DIFFERENT>"""
+JUDGMENT: <EQUIVALENT or DIFFERENT>
+"""
 
     return prompt
 
+JUDGMENT_PATTERN = re.compile(r"^judgment\s*:\s*(equivalent|different)\s*$", re.IGNORECASE)
 
 def _extract_boxed_content(text: str) -> list:
     results = []
     i = 0
     while i < len(text):
+    
         start = text.find('\\boxed{', i)
         if start == -1:
             break
-        brace_start = start + 7  
+   
+        brace_start = start + 7 
         brace_count = 1
         j = brace_start
         while j < len(text) and brace_count > 0:
@@ -101,9 +105,11 @@ def _extract_boxed_content(text: str) -> list:
                 brace_count -= 1
             j += 1
         if brace_count == 0:
+         
             results.append(text[brace_start:j-1])
             i = j
         else:
+        
             i = brace_start
     return results
 
@@ -123,6 +129,7 @@ def extract_solution_text(solution: Any) -> str:
     if not isinstance(solution, str):
         return str(solution)
 
+    # 使用新的嵌套括号匹配函数
     boxed_matches = _extract_boxed_content(solution)
     if boxed_matches:
         return _normalize_extracted_text(boxed_matches[-1])
@@ -181,11 +188,11 @@ def prepare_batch_prompts(
             solution = answer.strip()
         else:
             solution = extract_solution_text(item.get('solution', ''))
-
+    
         raw_response = item.get('predict', item.get('model_prediction', ''))
 
         response = extract_response_text(raw_response)
-        if response and solution:
+        if response and solution: 
             prompt = create_comparison_prompt(question, solution, response)
             messages = [{"role": "user", "content": prompt}]
             prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
@@ -206,11 +213,9 @@ def batch_evaluate(
     outputs = llm.generate(all_prompts, sampling_params)
 
     print(f"✅ Generation completed, processing outputs...", flush=True)
-
     outputs_list = list(outputs)
     print(f"✅ Converted {len(outputs_list)} outputs to list", flush=True)
-
-
+    
     responses = []
     for i, output in enumerate(outputs_list):
         try:
@@ -218,8 +223,8 @@ def batch_evaluate(
             responses.append(text)
         except (IndexError, AttributeError) as e:
             print(f"⚠️  Warning: Failed to extract text from output {i}: {e}", flush=True)
-            responses.append("")
-
+            responses.append("")  
+    
     print(f"✅ Extracted {len(responses)} responses, parsing judgments...", flush=True)
     judgments = extract_judgment_batch(responses)
 
@@ -242,7 +247,7 @@ def main():
     parser.add_argument('--input_file', type=str, default='math_with_rollouts.jsonl')
     parser.add_argument('--output_file', type=str, default='math_with_failscores.jsonl')
 
-    parser.add_argument('--model', type=str, default='/path/to/user/Qwen3-4B-Instruct-2507')
+    parser.add_argument('--model', type=str, default='./models/Qwen3-4B-Instruct-2507')
     parser.add_argument('--tensor_parallel_size', type=int, default=1)
     parser.add_argument('--gpu_memory_utilization', type=float, default=0.8)
 
@@ -259,7 +264,7 @@ def main():
         tensor_parallel_size=args.tensor_parallel_size,
         gpu_memory_utilization=args.gpu_memory_utilization,
         trust_remote_code=True,
-        max_model_len=args.max_model_len 
+        max_model_len=args.max_model_len  
     )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
@@ -292,3 +297,102 @@ def evaluate_predictions_with_judge(
     max_tokens: int = 8192,
     max_model_len: int = 70000,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    predictions = load_jsonl(predictions_path)
+    pid_to_record = {}
+    for record in eval_records:
+        key = record.get('pid') or str(record.get('id', ''))
+        if key:
+            pid_to_record[key] = record
+    eval_data = []
+    for pred in predictions:
+        if '_metadata' in pred and 'original_pid' in pred['_metadata']:
+            original_pid = pred['_metadata']['original_pid']
+            attempt = pred['_metadata'].get('attempt', 1)
+        elif 'pid' in pred:
+            original_pid = pred['pid']
+            attempt = 1
+        elif 'id' in pred:
+            original_pid = str(pred['id'])
+            attempt = 1
+        else:
+            if len(eval_data) < len(eval_records):
+                original_pid = eval_records[len(eval_data)].get('pid', '')
+                attempt = 1
+            else:
+                print(f"⚠️  Warning: Cannot determine pid for prediction {len(eval_data)}")
+                continue
+        if original_pid not in pid_to_record:
+            print(f"⚠️  Warning: PID {original_pid} not found in eval_records")
+            continue
+        
+        record = pid_to_record[original_pid]
+        
+        eval_item = {
+            'problem': record.get('question', ''),
+            'answer': record.get('answer', ''),
+            'model_prediction': pred.get('predict', pred.get('model_prediction', '')), 
+            'id': original_pid, 
+            'attempt': attempt,  
+            'category_id': record.get('category_id', 0),
+            'category_name': record.get('category_name', 'Unknown'),
+        }
+        eval_data.append(eval_item)
+    
+
+    print(f'🛠️ Requested max_model_len: {max_model_len}', flush=True)
+
+    llm = LLM(
+        model=model_path,
+        tensor_parallel_size=tensor_parallel_size,
+        gpu_memory_utilization=gpu_memory_utilization,
+        trust_remote_code=True,
+        max_model_len=max_model_len,
+        enforce_eager=False 
+    )
+
+    try:
+        actual_len = None
+        if hasattr(llm, 'llm_engine') and hasattr(llm.llm_engine, 'model_config'):
+            actual_len = llm.llm_engine.model_config.max_model_len
+        elif hasattr(llm, 'model_config'):
+            actual_len = getattr(llm.model_config, 'max_model_len', None)
+
+        if actual_len is not None:
+            print(f'✅ vLLM initialized with max_model_len={actual_len}', flush=True)
+            if actual_len < max_model_len:
+                print(f'⚠️  WARNING: effective max_model_len ({actual_len}) < requested ({max_model_len})', flush=True)
+        else:
+            print('⚠️  Could not verify vLLM max_model_len from engine config', flush=True)
+    except Exception as verify_error:
+        print(f'⚠️  Failed to verify max_model_len: {verify_error}', flush=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    eval_data = batch_evaluate(eval_data, llm, sampling_params, tokenizer)
+    
+    total = len(eval_data)
+    matched = sum(1 for item in eval_data if item.get('matched') == True)
+    different = sum(1 for item in eval_data if item.get('matched') == False)
+    unknown = sum(1 for item in eval_data if item.get('matched') is None)
+    
+    stats = {
+        'total': total,
+        'correct': matched,
+        'wrong': different,
+        'unknown': unknown,
+        'accuracy': matched / total if total > 0 else 0.0,
+    }
+    
+    print(f"✅ Evaluation complete: {matched}/{total} correct ({stats['accuracy']*100:.2f}%)")
+    if unknown > 0:
+        print(f"⚠️  {unknown} predictions could not be judged")
+    
+    return eval_data, stats
+
+
+if __name__ == "__main__":
+    main()

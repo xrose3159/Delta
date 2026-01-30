@@ -7,8 +7,6 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-
-
 SFT_SYSTEM_PROMPT = """You are an expert in science and visual reasoning with advanced capabilities in multimodal analysis. Your goal is to create a **perfect, highly detailed training example** for a new AI model. Do not summarize or abbreviate. Your reasoning must be **expansive, verbose, and pedagogical**.
         ### Core Principles
         1.  **Extreme Detail.** Prioritize depth over brevity. Explain the "why" and "how" behind every step, even simple ones.
@@ -50,7 +48,8 @@ SFT_SYSTEM_PROMPT = """You are an expert in science and visual reasoning with ad
         * For multiple choice, include the letter and the value.
         * Strictly no reasoning text inside this tag, only the final result.
 
-        Analyze all provided materials carefully. **Write a lengthy, comprehensive, and meticulous response following the strictly defined format above.**"""
+        Analyze all provided materials carefully. **Write a lengthy, comprehensive, and meticulous response following the strictly defined format above.**
+    """
 
 
 
@@ -69,3 +68,97 @@ def get_problem_id(problem: Dict[str, Any]) -> str:
         return str(hash(problem.get('problem', '')) % 100000)
     else:
         return str(problem_id_val)
+
+
+@dataclass
+class SFTDataPoint:
+    instruction: str  
+    response: str
+    images: List[str] = None  
+    system: str = None 
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = {
+            "conversations": [
+                {
+                    "from": "user",
+                    "value": self.instruction  
+                },
+                {
+                    "from": "assistant",
+                    "value": self.response 
+                }
+            ]
+        }
+
+        if self.system:
+            data["system"] = self.system
+
+        if self.images:
+            data["images"] = self.images
+        
+        return data
+
+
+class SFTDataBuilder:
+    
+    def __init__(self, config):
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def build_sft_dataset(
+        self,
+        wrong_problems: List[Dict[str, Any]],
+        output_file: Path,
+        corrected_cots: Dict[str, str] = None
+    ) -> tuple[int, int]:
+        if not wrong_problems:
+            self.logger.warning("No wrong problems provided")
+            return 0, 0
+        
+        self.logger.info(f"Building SFT dataset from {len(wrong_problems)} wrong problems...")
+        
+        sft_data_points = []
+        skipped_count = 0
+        
+        for problem in wrong_problems:
+            problem_id = get_problem_id(problem)
+            
+            problem_text = problem.get('problem', '')
+            if not problem_text:
+                self.logger.warning(f"Problem {problem_id}: missing problem text, skipping")
+                skipped_count += 1
+                continue
+            
+            if corrected_cots and problem_id in corrected_cots:
+                correct_answer = corrected_cots[problem_id]
+            else:
+                self.logger.warning(f"Problem {problem_id}: no corrected CoT available, skipping")
+                skipped_count += 1
+                continue
+            
+            image_paths = normalize_image_paths(problem.get('image_path'))
+            
+            sanitized_answer = correct_answer.replace("<image>", "the image")
+
+            sft_point = SFTDataPoint(
+                instruction=problem_text,
+                response=sanitized_answer,
+                images=image_paths,
+                system=SFT_SYSTEM_PROMPT
+            )
+            
+            sft_data_points.append(sft_point.to_dict())
+        
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(sft_data_points, f, ensure_ascii=False, indent=2)
+        
+        self.logger.info(f"SFT dataset saved to: {output_file}")
+        self.logger.info(f"  Total SFT data points: {len(sft_data_points)}")
+        self.logger.info(f"  Skipped problems: {skipped_count}")
+        self.logger.info(f"  Success rate: {len(sft_data_points)}/{len(wrong_problems)} "
+                        f"({len(sft_data_points)/len(wrong_problems)*100:.1f}%)")
+        
+        return len(sft_data_points), len(wrong_problems)
+
