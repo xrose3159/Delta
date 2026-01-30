@@ -139,7 +139,7 @@ class AdaptiveTrainingConfig:
     llm_generator_tensor_parallel_size: int = field(default_factory=lambda: int(_env("LLM_GENERATOR_TENSOR_PARALLEL_SIZE", "8")))
     llm_generator_gpu_memory_utilization: float = field(default_factory=lambda: float(_env("LLM_GENERATOR_GPU_MEMORY_UTILIZATION", "0.85"))) 
     llm_generator_max_model_len: int = field(default_factory=lambda: int(_env("LLM_GENERATOR_MAX_MODEL_LEN", "98304")))  
-    cot_model: str = field(init=False)  # 从 llm_generator_model_path 提取
+    cot_model: str = field(init=False) 
     cot_temperature: float = field(default_factory=lambda: float(_env("COT_TEMPERATURE", "0.7")))
     cot_max_tokens: int = field(default_factory=lambda: int(_env("COT_MAX_TOKENS", "4096")))
     corrected_cot_max_tokens: int = field(default_factory=lambda: int(_env("CORRECTED_COT_MAX_TOKENS", "65536"))) 

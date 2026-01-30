@@ -727,7 +727,6 @@ class MultiRoundPipelineDPO:
     def _load_corrected_cots(self, round_dir: Path) -> Dict[str, str]:
         file_path = round_dir / "sft" / "corrected_cots.json"
         data = self._load_json_file(file_path) or {}
-        # 确保键为字符串
         return {str(k): v for k, v in data.items()}
     
     def _apply_saved_error_analysis(self, round_dir: Path, wrong_problems: List[Dict[str, Any]]) -> None:
@@ -755,7 +754,6 @@ class MultiRoundPipelineDPO:
             current_pid = os.getpid()
             current_user = os.getenv("USER", "")
             
-            # 1. 获取当前占用 GPU 的进程
             result = subprocess.run(
                 ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
                 capture_output=True,
@@ -1772,7 +1770,6 @@ class MultiRoundPipelineDPO:
                     else:
                         prediction = full_content
 
-                    # logging.info(f"prediction: {prediction}")
                     is_valid, reason = is_valid_cot(prediction)
                     
                     if is_valid:
@@ -2064,8 +2061,7 @@ class MultiRoundPipelineDPO:
         
         if not success:
             return False
-        
-        # 训练完成，模型已直接保存
+
         trained_model_path = output_dir
         self.logger.info(f"✅ SFT training completed. Model saved to: {trained_model_path}")
         

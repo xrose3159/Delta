@@ -521,7 +521,7 @@ def prepare_llm(args: argparse.Namespace) -> LLM:
     llm_kwargs['gpu_memory_utilization'] = args.gpu_memory_utilization if args.gpu_memory_utilization is not None else 0.7
     logging.info("Using max_model_len=%d, gpu_memory_utilization=%.2f", llm_kwargs['max_model_len'], llm_kwargs['gpu_memory_utilization'])
     
-    llm_kwargs['enforce_eager'] = False  # 启用 CUDA Graph
+    llm_kwargs['enforce_eager'] = False
     llm_kwargs['enable_prefix_caching'] = True  
     llm_kwargs['enable_chunked_prefill'] = True
 

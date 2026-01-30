@@ -1,13 +1,6 @@
 #!/bin/bash
 
 set -e
-# GCC settings - update these paths according to your system
-# GCC_BASE="/path/to/gcc-8.5.0"
-# GCC_LIB="${GCC_BASE}/lib/gcc/x86_64-pc-linux-gnu/8.5.0"
-# export C_INCLUDE_PATH="${GCC_LIB}/include:${GCC_LIB}/include-fixed:${GCC_BASE}/include:${C_INCLUDE_PATH}"
-# export CPLUS_INCLUDE_PATH="${GCC_LIB}/include:${GCC_LIB}/include-fixed:${GCC_BASE}/include:${CPLUS_INCLUDE_PATH}"
-# export CPATH="${GCC_LIB}/include:${GCC_LIB}/include-fixed:${GCC_BASE}/include:${CPATH}"
-
 export GPU_COUNT=${GPU_COUNT:-8}                  
 export PARTITION=${PARTITION:-"raise"}              
 export QUOTA_TYPE=${QUOTA_TYPE:-"reserved"}         
